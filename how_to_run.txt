@@ -1,0 +1,25 @@
+# 在终端运行该程序的步骤如下：
+
+===== 运行步骤 =====
+
+第一步：进入项目目录
+cd D:\A-Freedo\研究型任务\ArchitectSenior\my-banana-workflow
+
+第二步：激活虚拟环境
+venv\Scripts\activate
+
+第三步：把你的图片放入 inputs\ 文件夹
+
+第四步：运行
+python agent.py --image "inputs/你的图片.jpg"
+
+===== 可选参数 =====
+
+指定PPT风格：
+python agent.py --image "inputs/你的图片.jpg" --style "architecture"
+
+指定页数（在config.yaml里改 total_slides）
+
+===== 输出结果 =====
+
+去 outputs\ 文件夹找结果

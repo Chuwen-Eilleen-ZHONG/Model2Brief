@@ -1,0 +1,23 @@
+# ================================
+# my-banana-workflow 全局配置文件
+# ================================
+
+# PPT 设置
+ppt:
+  style: "architecture"        # 风格：architecture / gradient-glass / vector-illustration
+  total_slides: 2              # PPT 总页数
+  resolution: "2K"             # 分辨率：2K / 4K
+
+# 渲染设置
+render:
+  quality: "high"              # 渲染质量：high / medium
+  lighting: "golden_hour"      # 光照风格：golden_hour / daylight / dramatic
+
+# 报告设置
+report:
+  language: "zh"               # 报告语言：zh / en
+  depth: "detailed"            # 分析深度：detailed / brief
+
+# 输出设置
+output:
+  session_prefix: "project"    # session文件夹前缀

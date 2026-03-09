@@ -1,0 +1,18 @@
+{
+  "title": "测试公司介绍",
+  "total_slides": 2,
+  "slides": [
+    {
+      "slide_number": 1,
+      "page_type": "cover",
+      "title": "测试公司",
+      "content": "标题：测试公司\n副标题：这是一个测试PPT"
+    },
+    {
+      "slide_number": 2,
+      "page_type": "content",
+      "title": "核心产品",
+      "content": "产品一：AI助手\n产品二：数据分析平台"
+    }
+  ]
+}
