@@ -4,9 +4,10 @@
 按顺序调度三个 Skill，维护共享上下文 session.json
 
 用法：
-    python agent.py --image "inputs/test.png"
-    python agent.py --image "inputs/test.png" --topic "建筑设计分析报告"
-    python agent.py --image "inputs/test.png" --style "architecture" --ppt-only
+    python agent.py --image inputs/view1.png
+    python agent.py --image inputs/view1.png inputs/view2.png inputs/view3.png inputs/view4.png
+    python agent.py --image inputs/view1.png --topic "空间智能决策报告"
+    python agent.py --image inputs/view1.png --style "architecture" --ppt-only
 """
 
 import argparse
@@ -90,15 +91,17 @@ def apply_cli_overrides(config: dict, args: argparse.Namespace) -> dict:
 # Session helpers
 # =============================================================================
 
-def init_session(session_id: str, topic: str, image_rel: str, config: dict) -> None:
+def init_session(session_id: str, topic: str, images_rel: list, config: dict) -> None:
     session = {
         "session_id": session_id,
         "topic": topic,
-        "input_image": image_rel,
+        "input_image": images_rel[0],       # 向后兼容：保留第一张
+        "input_images": images_rel,          # 新字段：完整列表
         "config": config,
         "render": {
             "status": "pending",
             "output_image": None,
+            "output_images": [],
             "description": None,
         },
         "report": {
@@ -181,8 +184,8 @@ def main() -> None:
             "  python agent.py --image inputs/test.png --style architecture --ppt-only"
         ),
     )
-    parser.add_argument("--image",        default=None,  help="输入图片路径")
-    parser.add_argument("--topic",        default="建筑设计分析报告", help="报告主题（可选）")
+    parser.add_argument("--image",        default=None,  nargs="+", help="输入图片路径（支持多张：view1.png view2.png view3.png view4.png）")
+    parser.add_argument("--topic",        default="空间智能决策报告", help="报告主题（可选）")
     # CLI 覆盖 config.yaml 的参数
     parser.add_argument("--style",        default=None,  help="PPT风格，覆盖config.yaml ppt.style")
     parser.add_argument("--total-slides", default=None,  type=int, dest="total_slides",
@@ -238,31 +241,32 @@ def main() -> None:
         print("ERROR: --image is required (or use --ppt-only to skip render/report)")
         sys.exit(1)
 
-    image_path = Path(args.image)
-    if not image_path.is_absolute():
-        image_path = _ROOT / args.image
-    if not image_path.exists():
-        print(f"ERROR: Image not found: {image_path}")
-        sys.exit(1)
-
-    # 相对路径写入 session（供各 Skill 使用）
-    try:
-        image_rel = str(image_path.relative_to(_ROOT)).replace("\\", "/")
-    except ValueError:
-        image_rel = str(image_path).replace("\\", "/")
+    images_rel = []
+    for raw in args.image:
+        p = Path(raw)
+        if not p.is_absolute():
+            p = _ROOT / raw
+        if not p.exists():
+            print(f"ERROR: Image not found: {p}")
+            sys.exit(1)
+        try:
+            rel = str(p.relative_to(_ROOT)).replace("\\", "/")
+        except ValueError:
+            rel = str(p).replace("\\", "/")
+        images_rel.append(rel)
 
     # 4. 生成 session_id（含 prefix）
     prefix = config.get("output", {}).get("session_prefix", "project")
     session_id = f"{prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     # 5. 初始化 session.json（含 config）
-    init_session(session_id, args.topic, image_rel, config)
+    init_session(session_id, args.topic, images_rel, config)
     print(f"\n{'=' * 60}")
     print(f"  My Banana Workflow")
     print(f"{'=' * 60}")
     print(f"  Session : {session_id}")
     print(f"  Topic   : {args.topic}")
-    print(f"  Image   : {image_rel}")
+    print(f"  Images  : {len(images_rel)} 张  {images_rel}")
     print(f"  Style   : {config['ppt']['style']}")
     print(f"  Slides  : {config['ppt']['total_slides']}")
     print(f"{'=' * 60}\n")

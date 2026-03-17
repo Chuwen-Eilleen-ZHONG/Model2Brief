@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
 Skill 1: 图片渲染增强
-输入：session.json 中的 input_image
-输出：渲染后的图片路径，写回 session.json render.output_image
+输入：session.json 中的 input_images（多张）或 input_image（单张，向后兼容）
+输出：每张输入图对应一张渲染图，写回 session.json render.output_images
 
 工作流程：
-1. 读取 session.json -> input_image
-2. 用 Gemini Vision (gemini-2.0-flash) 理解图片内容
-3. 根据理解结果构建渲染增强 prompt
-4. 用 Gemini 图像生成 (gemini-3-pro-image) 生成高质量渲染图
-5. 保存渲染图，写回 session.json
+1. 读取 session.json -> input_images
+2. 用 Gemini Vision (gemini-2.5-flash) 一次性分析全部输入图（多角度综合理解）
+3. 根据综合描述构建渲染 prompt
+4. 逐张调用 Gemini 图像生成，分别保存为 rendered_01.jpg, rendered_02.jpg...
+5. 写回 session.json render.output_images（列表）和 render.output_image（第一张）
 """
 
 import base64
@@ -87,17 +87,20 @@ def write_session(session: dict) -> None:
         json.dump(session, f, ensure_ascii=False, indent=2)
 
 
-def load_render_config() -> tuple[str, str]:
-    """从 session.json["config"] 读取 render.quality 和 render.lighting。"""
+def load_render_config() -> tuple[str, str, str]:
+    """从 session.json["config"] 读取 render.quality、render.lighting 和 report.language。"""
     session = read_session()
     cfg = session.get("config", {}).get("render", {})
     quality  = cfg.get("quality",  "high")
     lighting = cfg.get("lighting", "golden_hour")
-    return quality, lighting
+    language = session.get("config", {}).get("report", {}).get("language", "zh")
+    return quality, lighting, language
 
 
 def update_render_status(status: str, **kwargs) -> None:
     session = read_session()
+    if "render" not in session:
+        session["render"] = {}
     session["render"]["status"] = status
     for k, v in kwargs.items():
         session["render"][k] = v
@@ -147,38 +150,61 @@ def select_aspect_ratio(image_path: Path) -> tuple[str, int, int]:
 
 
 # =============================================================================
-# Step 1: Vision — Understand the image
+# Step 1: Vision — Understand the image(s)
 # =============================================================================
 
-def analyze_image(client, image_b64: str, mime_type: str) -> str:
-    """用 gemini-2.5-flash + 原图 inline_data 分析建筑模型形态。"""
-    print("  Analyzing image with Gemini Vision ...")
+def analyze_images_multi(client, images: list, language: str = "zh") -> str:
+    """用 gemini-2.5-flash 一次性分析多张建筑模型图（多角度综合理解）。
+
+    images: list of (image_b64: str, mime_type: str)
+    language: "zh" 或 "en"，控制描述输出语言
+    """
+    n = len(images)
+    if n == 1:
+        angle_note = (
+            "This is a photo of an architectural physical scale model "
+            "(white foam/resin material)."
+        )
+    else:
+        angle_note = (
+            f"These are {n} photos of the same architectural physical scale model "
+            f"(white foam/resin material) taken from different angles "
+            f"(e.g. front view, rear view, left side, right side). "
+            "Analyze them together as a comprehensive multi-angle record of the same building."
+        )
+
+    if language == "zh":
+        lang_inst = "请用简体中文描述，所有内容必须使用中文（建筑专业术语可用英文缩写，如 BIM、CAD）。"
+    else:
+        lang_inst = "Please respond in English."
+
+    print(f"  Analyzing {n} image(s) with Gemini Vision ...")
+
+    parts = []
+    for i, (b64, mime) in enumerate(images):
+        parts.append({"inline_data": {"mime_type": mime, "data": b64}})
+        if n > 1:
+            parts.append({"text": f"[View {i + 1} of {n}]"})
+
+    parts.append({
+        "text": (
+            f"{angle_note} {lang_inst} "
+            "Please analyze in detail for the purpose of generating "
+            "photorealistic architectural renderings. Describe: "
+            "1) Building form: overall shape, massing, number of floors, "
+            "facade composition, roof type, notable architectural features; "
+            "2) Spatial layout: building footprint, surrounding site, "
+            "relationship between volumes; "
+            "3) Viewing angles and perspectives visible across all photos: "
+            "camera height, angle, which facades are shown in each view; "
+            "4) Proportions and scale: relative dimensions of key elements. "
+            "Be specific and precise. Focus on architectural geometry, not model materials."
+        )
+    })
 
     response = client.models.generate_content(
         model="gemini-2.5-flash",
-        contents=[
-            {
-                "parts": [
-                    {"inline_data": {"mime_type": mime_type, "data": image_b64}},
-                    {
-                        "text": (
-                            "This is a photo of an architectural physical scale model "
-                            "(white foam/resin material). Please analyze it in detail for "
-                            "the purpose of generating a photorealistic architectural rendering. "
-                            "Describe: "
-                            "1) Building form: overall shape, massing, number of floors, "
-                            "facade composition, roof type, notable architectural features; "
-                            "2) Spatial layout: building footprint, surrounding site, "
-                            "relationship between volumes; "
-                            "3) Viewing angle and perspective: camera height, angle, "
-                            "which facades are visible; "
-                            "4) Proportions and scale: relative dimensions of key elements. "
-                            "Be specific and precise. Focus on architectural geometry, not model materials."
-                        )
-                    },
-                ]
-            }
-        ],
+        contents=[{"parts": parts}],
     )
 
     description = response.text.strip()
@@ -215,7 +241,9 @@ def build_render_prompt(description: str, quality: str = "high", lighting: str =
         "  building proportions, and composition from the original model photo\n"
         f"- Quality: {quality_desc}\n"
         "Output: a single photorealistic architectural rendering, "
-        "no model artifacts, no white foam material visible."
+        "no model artifacts, no white foam material visible, "
+        "absolutely no text labels, no watermarks, no overlay text or annotations "
+        "in any language on the image."
     )
 
 
@@ -267,66 +295,77 @@ def generate_render(client, image_b64: str, mime_type: str, prompt: str,
 def main() -> None:
     load_env()
 
-    # 1. 读取 session.json
+    # 1. 读取 session.json，支持 input_images（新）和 input_image（旧，向后兼容）
     session = read_session()
-    input_image_rel = session.get("input_image")
-    if not input_image_rel:
-        print("Error: session.json -> input_image is not set")
-        sys.exit(1)
+    input_images_rel = session.get("input_images") or []
+    if not input_images_rel:
+        single = session.get("input_image")
+        if single:
+            input_images_rel = [single]
+        else:
+            print("Error: session.json -> input_images is not set")
+            sys.exit(1)
 
-    input_image_path = _PROJECT_ROOT / input_image_rel
-    if not input_image_path.exists():
-        msg = f"Input image not found: {input_image_path}"
-        print(f"Error: {msg}")
-        update_render_status("failed", error=msg)
-        sys.exit(1)
-
-    # 确定 session_id（有则用，无则用 unknown）
     session_id = session.get("session_id") or "unknown"
-
-    # 输出路径
-    output_image_path = _PROJECT_ROOT / "outputs" / str(session_id) / "render_result" / "rendered.jpg"
-    output_image_rel = f"outputs/{session_id}/render_result/rendered.jpg"
 
     print("=" * 60)
     print("Skill Render: Image Enhancement")
     print("=" * 60)
-    print(f"Input : {input_image_path}")
-    print(f"Output: {output_image_path}")
+    print(f"Input : {len(input_images_rel)} image(s)  {input_images_rel}")
     print()
 
     try:
         client = get_gemini_client()
 
         # 读取配置
-        quality, lighting = load_render_config()
-        print(f"  Config  : quality={quality}, lighting={lighting}")
+        quality, lighting, language = load_render_config()
+        print(f"  Config  : quality={quality}, lighting={lighting}, language={language}")
 
-        # 读取图片尺寸，选择最接近的 aspect ratio
-        aspect_ratio, orig_w, orig_h = select_aspect_ratio(input_image_path)
-
-        # 读取图片二进制，转 base64，确定 MIME
-        with open(input_image_path, "rb") as f:
-            image_data = f.read()
-        image_b64 = base64.b64encode(image_data).decode()
-        suffix = input_image_path.suffix.lower()
         mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                     ".png": "image/png", ".webp": "image/webp"}
-        mime_type = mime_map.get(suffix, "image/jpeg")
 
-        # Step 1: Vision 理解原图
-        description = analyze_image(client, image_b64, mime_type)
+        # 预加载所有输入图片
+        loaded = []   # list of (Path, b64, mime)
+        for rel in input_images_rel:
+            p = _PROJECT_ROOT / rel
+            if not p.exists():
+                msg = f"Input image not found: {p}"
+                print(f"Error: {msg}")
+                update_render_status("failed", error=msg)
+                sys.exit(1)
+            with open(p, "rb") as f:
+                data = f.read()
+            b64 = base64.b64encode(data).decode()
+            mime = mime_map.get(p.suffix.lower(), "image/jpeg")
+            loaded.append((p, b64, mime))
 
-        # Step 2: 构建渲染 prompt（注入 quality / lighting）
+        # Step 1: 一次性多角度 Vision 分析
+        description = analyze_images_multi(
+            client, [(b64, mime) for _, b64, mime in loaded], language=language
+        )
+
+        # Step 2: 构建渲染 prompt（共用一份描述）
         prompt = build_render_prompt(description, quality=quality, lighting=lighting)
 
-        # Step 3: 生成渲染图（传入原图 + 自适应比例）
-        generate_render(client, image_b64, mime_type, prompt, aspect_ratio, output_image_path)
+        # Step 3: 逐张生成渲染图
+        output_images_rel = []
+        render_result_dir = _PROJECT_ROOT / "outputs" / str(session_id) / "render_result"
+
+        for i, (img_path, img_b64, img_mime) in enumerate(loaded):
+            suffix_num = f"{i + 1:02d}"
+            out_path = render_result_dir / f"rendered_{suffix_num}.jpg"
+            out_rel  = f"outputs/{session_id}/render_result/rendered_{suffix_num}.jpg"
+
+            aspect_ratio, _, _ = select_aspect_ratio(img_path)
+            print(f"\n  [View {i + 1}/{len(loaded)}] {img_path.name}")
+            generate_render(client, img_b64, img_mime, prompt, aspect_ratio, out_path)
+            output_images_rel.append(out_rel)
 
         # Step 4: 写回 session.json
         update_render_status(
             "done",
-            output_image=output_image_rel,
+            output_image=output_images_rel[0],    # 向后兼容
+            output_images=output_images_rel,       # 新字段
             description=description,
         )
 
@@ -334,7 +373,8 @@ def main() -> None:
         print("=" * 60)
         print("Render Complete!")
         print("=" * 60)
-        print(f"Output: {output_image_path}")
+        for rel in output_images_rel:
+            print(f"  {rel}")
 
     except Exception as e:
         msg = str(e)

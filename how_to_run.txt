@@ -11,12 +11,12 @@ venv\Scripts\activate
 第三步：把你的图片放入 inputs\ 文件夹
 
 第四步：运行
-python agent.py --image "inputs/你的图片.jpg"
+python agent.py --image inputs/view1.png inputs/view2.png inputs/view3.png inputs/view4.png
 
 ===== 可选参数 =====
 
 指定PPT风格：
-python agent.py --image "inputs/你的图片.jpg" --style "architecture"
+python agent.py --image inputs/view1.png inputs/view2.png inputs/view3.png inputs/view4.png --style architecture --topic "空间智能研究报告"
 
 指定页数（在config.yaml里改 total_slides）
 

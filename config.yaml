@@ -5,7 +5,7 @@
 # PPT 设置
 ppt:
   style: "architecture"        # 风格：architecture / gradient-glass / vector-illustration
-  total_slides: 2              # PPT 总页数
+  total_slides: 10             # PPT 总页数
   resolution: "2K"             # 分辨率：2K / 4K
 
 # 渲染设置

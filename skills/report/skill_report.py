@@ -41,15 +41,30 @@ _SESSION_FILE = _PROJECT_ROOT / "session.json"
 # 每个类型的分析维度，统一用【维度名称】格式，便于解析
 IMAGE_TYPE_PROMPTS: dict[str, str] = {
     "建筑/城市规划": (
-        "请从以下维度详细分析，每个维度用【维度名称】开头，100-150字，专业建筑评论语言：\n"
-        "【建筑类型】功能构成（住宅/商业/办公/综合体等）\n"
-        "【建筑风格】设计语言与时代特征\n"
-        "【建筑形态】层数、体量、平面布局、塔楼与裙房关系\n"
-        "【立面材质】主要材质、窗墙比、阳台、幕墙系统、立面节奏\n"
-        "【景观绿化】绿化率、植被类型、景观层次、屋顶花园\n"
-        "【底层功能】商业裙房、主入口、架空层、公共空间\n"
-        "【城市关系】街道界面、退线、与周边环境融合\n"
-        "【设计亮点】最多3条，提炼最具创新性的设计特色"
+        "请从以下维度进行专业建筑空间分析，每个维度用【维度名称】开头，100-150字，"
+        "使用专业建筑学语言。重点分析空间逻辑与使用体验，而非外观描述。"
+        "尽可能包含量化指标（层高、尺度、比例等）。\n\n"
+        "【空间组织】建筑的空间构成逻辑：核心筒位置、垂直交通布局、"
+        "各功能分区的空间关系（裙房商业、标准层居住/办公、顶部处理），"
+        "以及不同功能体块之间的水平与垂直组织方式。\n"
+        "【功能流线】不同使用群体的动线系统：居民/访客/商业顾客/后勤服务各流线是否分离，"
+        "入口设置逻辑（主入口、商业入口、地下车库入口位置关系），"
+        "垂直交通效率（电梯数量与层数的合理性推断）。\n"
+        "【空间层级】公共—半公共—私密空间的递进关系：从城市街道→建筑退界→底层大堂→"
+        "电梯厅→走廊→单元门的空间序列是否清晰，过渡空间的设计处理。\n"
+        "【尺度关系】关键空间的尺度分析：底层大堂层高推断、标准层走廊宽度推断、"
+        "单元进深与面宽比例、塔楼楼间距是否满足日照要求，裙房高度与塔楼的比例关系。\n"
+        "【空间效率】空间利用效率评估：从体量推断核心筒占比、公摊面积比例、"
+        "得房率区间，以及是否存在明显的空间浪费（过大的公共走廊、无效中庭等）。\n"
+        "【垂直分区】不同楼层的功能分布与空间特征：裙房层的商业层高处理（通高/夹层），"
+        "标准层的平面效率，屋顶层或顶层的特殊处理（设备层、退台、屋顶平台）。\n"
+        "【外部空间】建筑与场地的空间关系：退台或错层形成的露台空间可用性，"
+        "底层架空层或骑楼的公共空间品质，屋顶绿化或平台的可达性与使用逻辑，"
+        "建筑与城市街道之间的过渡空间设计。\n"
+        "【使用体验】从使用者角度分析空间品质：主要居住/使用单元的采光朝向与通风条件，"
+        "视线与景观可达性，噪声与私密性保护逻辑，垂直移动体验（等候空间、电梯厅品质）。\n"
+        "【空间创新】最多3条，提炼最具创新性的空间策略——"
+        "重点关注功能逻辑创新、流线组织创新、空间体验创新，而非仅外观或材质特色。"
     ),
     "室内设计": (
         "请从以下维度详细分析，每个维度用【维度名称】开头，100-150字，专业室内设计评论语言：\n"
@@ -189,18 +204,31 @@ def get_gemini_client():
     return genai.Client(api_key=api_key)
 
 
+def _lang_constraint(language: str) -> str:
+    """返回语言强约束指令，插入每个 prompt 的开头。"""
+    if language == "en":
+        return "All responses must be in English only. Do not use any Chinese characters."
+    return (
+        "【语言强制要求】所有回答必须使用简体中文，"
+        "严禁出现英文单词或拉丁字母（专有名词如 BIM、CAD、CBD、LEED 等可保留）。"
+        "标题、正文、括号内说明全部使用简体中文。"
+    )
+
+
 def vision_call(client, image_b64: str, mime_type: str, text: str) -> str:
-    """通用 Vision 调用，返回文本响应。"""
+    """通用单图 Vision 调用，返回文本响应。"""
+    return vision_call_multi(client, [(image_b64, mime_type)], text)
+
+
+def vision_call_multi(client, images: list, text: str) -> str:
+    """通用多图 Vision 调用。images: list of (b64, mime_type)"""
+    parts = []
+    for b64, mime in images:
+        parts.append({"inline_data": {"mime_type": mime, "data": b64}})
+    parts.append({"text": text})
     response = client.models.generate_content(
         model="gemini-2.5-flash",
-        contents=[
-            {
-                "parts": [
-                    {"inline_data": {"mime_type": mime_type, "data": image_b64}},
-                    {"text": text},
-                ]
-            }
-        ],
+        contents=[{"parts": parts}],
     )
     return response.text.strip()
 
@@ -209,25 +237,27 @@ def vision_call(client, image_b64: str, mime_type: str, text: str) -> str:
 # Stage 1: Identify Image Type
 # =============================================================================
 
-def identify_image_type(client, image_b64: str, mime_type: str) -> str:
-    """阶段一：识别图片类型，返回标准化类型字符串。"""
+def identify_image_type(client, images: list, language: str = "zh") -> str:
+    """阶段一：识别图片类型，返回标准化类型字符串。images: list of (b64, mime)"""
     print("  Stage 1: Identifying image type ...")
 
     type_list = "\n".join(f"- {t}" for t in VALID_TYPES)
+    n = len(images)
+    prefix = f"以下是同一建筑模型的 {n} 张不同角度照片。\n" if n > 1 else ""
+    lang_note = _lang_constraint(language)
     prompt = (
-        f"请分析这张图片，判断它属于以下哪个类别。\n"
+        f"{lang_note}\n"
+        f"{prefix}请分析图片，判断它属于以下哪个类别。\n"
         f"只返回类别名称，不要其他任何内容：\n{type_list}"
     )
 
-    raw = vision_call(client, image_b64, mime_type, prompt)
+    raw = vision_call_multi(client, images, prompt)
 
-    # 匹配到已知类型
     for t in VALID_TYPES:
         if t in raw:
             print(f"  Identified type: {t}")
             return t
 
-    # 未匹配则归入"其他"
     print(f"  Type not matched (got: {raw!r}), fallback to 其他")
     return "其他"
 
@@ -236,51 +266,54 @@ def identify_image_type(client, image_b64: str, mime_type: str) -> str:
 # Stage 2: Deep Analysis
 # =============================================================================
 
-def analyze_image(client, image_b64: str, mime_type: str,
+def analyze_image(client, images: list,
                   image_type: str, topic: str,
                   language: str = "zh", depth: str = "detailed") -> str:
-    """阶段二：根据图片类型动态分析，支持语言和深度配置。"""
-    print(f"  Stage 2: Deep analysis for type='{image_type}' (lang={language}, depth={depth}) ...")
+    """阶段二：根据图片类型动态分析，支持多图、语言和深度配置。
+    images: list of (b64, mime)
+    """
+    n = len(images)
+    print(f"  Stage 2: Deep analysis ({n} image(s), type='{image_type}', lang={language}, depth={depth}) ...")
 
     type_prompt = IMAGE_TYPE_PROMPTS.get(image_type, IMAGE_TYPE_PROMPTS["其他"])
 
-    # 根据 depth 调整字数要求
     if depth == "brief":
         type_prompt = type_prompt.replace("100-150字", "50-80字").replace("100字", "50字")
 
-    # 根据 language 设置语言指令
+    multi_note = f"以下是同一建筑的 {n} 张不同角度渲染图，请综合所有角度进行分析。\n" if n > 1 else ""
+    lang_constraint = _lang_constraint(language)
+
     if language == "en":
-        lang_inst = "Please answer in English."
         topic_hint = f"Analysis topic: {topic}\n" if topic else ""
-        # 将中文维度名翻译为英文（用英文版提示词框架覆盖）
-        type_prompt = type_prompt  # 保持原有结构，Gemini 会理解 topic 上下文
     else:
-        lang_inst = "中文回答。"
         topic_hint = f"分析主题：{topic}\n" if topic else ""
 
-    full_prompt = f"{topic_hint}{lang_inst}\n\n{type_prompt}"
-    return vision_call(client, image_b64, mime_type, full_prompt)
+    full_prompt = f"{lang_constraint}\n\n{multi_note}{topic_hint}\n{type_prompt}"
+    return vision_call_multi(client, images, full_prompt)
 
 
 # =============================================================================
 # Summary Extraction
 # =============================================================================
 
-def extract_summary(client, image_type: str, analysis: str, topic: str) -> str:
+def extract_summary(client, image_type: str, analysis: str, topic: str,
+                    language: str = "zh") -> str:
     """根据图片类型生成3-5句话核心摘要。"""
     print("  Extracting summary ...")
 
     topic_hint = f"主题：{topic}。" if topic else ""
     type_hint = f"图片类型：{image_type}。"
+    lang_constraint = _lang_constraint(language)
 
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=(
+            f"{lang_constraint}\n\n"
             f"{topic_hint}{type_hint}\n"
             f"以下是图片分析报告：\n\n{analysis}\n\n"
             "请用3-5句话提炼核心亮点，作为综合评价摘要。"
-            "语言简洁专业，语气和侧重点须与图片类型匹配，"
-            "适合出现在PPT或项目介绍中。中文回答。"
+            "语言简洁专业，侧重空间逻辑与使用体验，"
+            "适合出现在设计院汇报PPT中。"
         ),
     )
     return response.text.strip()
@@ -509,17 +542,17 @@ def main() -> None:
     load_env()
 
     session = read_session()
-    render_output = session.get("render", {}).get("output_image")
-    if not render_output:
-        print("Error: session.json -> render.output_image is not set. Run skill_render.py first.")
-        sys.exit(1)
+    render_info = session.get("render", {})
 
-    image_path = _PROJECT_ROOT / render_output
-    if not image_path.exists():
-        msg = f"Rendered image not found: {image_path}"
-        print(f"Error: {msg}")
-        update_report_status("failed", error=msg)
-        sys.exit(1)
+    # 支持 output_images（新）和 output_image（旧，向后兼容）
+    render_outputs = render_info.get("output_images") or []
+    if not render_outputs:
+        single = render_info.get("output_image")
+        if single:
+            render_outputs = [single]
+        else:
+            print("Error: session.json -> render.output_images is not set. Run skill_render.py first.")
+            sys.exit(1)
 
     session_id = session.get("session_id") or "unknown"
     topic = session.get("topic") or ""
@@ -530,37 +563,47 @@ def main() -> None:
     print("=" * 60)
     print("Skill Report: Adaptive Image Analysis")
     print("=" * 60)
-    print(f"Input : {image_path}")
+    print(f"Input : {len(render_outputs)} rendered image(s)  {render_outputs}")
     print(f"Output: {report_path}")
     print()
 
     try:
         client = get_gemini_client()
 
-        with open(image_path, "rb") as f:
-            image_data = f.read()
-        image_b64 = base64.b64encode(image_data).decode()
-        suffix = image_path.suffix.lower()
         mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                     ".png": "image/png", ".webp": "image/webp"}
-        mime_type = mime_map.get(suffix, "image/jpeg")
+
+        # 加载全部渲染图
+        images = []   # list of (b64, mime)
+        for rel in render_outputs:
+            p = _PROJECT_ROOT / rel
+            if not p.exists():
+                msg = f"Rendered image not found: {p}"
+                print(f"Error: {msg}")
+                update_report_status("failed", error=msg)
+                sys.exit(1)
+            with open(p, "rb") as f:
+                data = f.read()
+            b64 = base64.b64encode(data).decode()
+            mime = mime_map.get(p.suffix.lower(), "image/jpeg")
+            images.append((b64, mime))
 
         # 读取配置
         language, depth = load_report_config()
         print(f"  Config  : language={language}, depth={depth}")
 
-        # 阶段一：类型识别
-        image_type = identify_image_type(client, image_b64, mime_type)
+        # 阶段一：类型识别（用全部图）
+        image_type = identify_image_type(client, images, language=language)
 
-        # 阶段二：深度分析
-        analysis = analyze_image(client, image_b64, mime_type, image_type, topic,
+        # 阶段二：深度分析（传全部图）
+        analysis = analyze_image(client, images, image_type, topic,
                                  language=language, depth=depth)
 
         # 提取 summary
-        summary = extract_summary(client, image_type, analysis, topic)
+        summary = extract_summary(client, image_type, analysis, topic, language=language)
 
-        # 生成并保存 report.md
-        report_md = build_report_md(image_type, analysis, summary, topic, render_output)
+        # 生成并保存 report.md（以第一张渲染图路径作为来源标注）
+        report_md = build_report_md(image_type, analysis, summary, topic, render_outputs[0])
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(report_md, encoding="utf-8")
         print(f"  Report saved: {report_path}")
@@ -576,7 +619,7 @@ def main() -> None:
             except Exception as ce:
                 print(f"  Warning: chart generation failed: {ce}")
 
-        # 写回 session.json（新增 image_type 字段）
+        # 写回 session.json
         update_report_status(
             "done",
             image_type=image_type,

@@ -1,6 +1,6 @@
 # Model2Brief 🏗️
 
-> From rough architectural model photo to professional presentation deck — fully automated.
+> From rough architectural model photos to professional presentation deck — fully automated.
 
 ![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
@@ -17,14 +17,14 @@ missing lighting, and insufficient detail — making them unsuitable for
 professional client presentations or institutional reviews.
 
 **Model2Brief** bridges this gap with a fully automated 3-stage AI pipeline
-that takes a single photo of an architectural model and produces a complete,
-presentation-ready PPT deck.
+that takes one or more photos of an architectural model (single view or
+multi-angle) and produces a complete, presentation-ready PPT deck.
 
 ---
 
 ## Demo
 
-| 📷 Raw Model Photo | 🎨 AI Rendered | 📊 Generated Slide |
+| 📷 Raw Model Photo(s) | 🎨 AI Rendered | 📊 Generated Slide |
 |:---:|:---:|:---:|
 | ![](assets/01_input_model.png) | ![](assets/02_rendered.jpg) | ![](assets/03_ppt_slide.png) |
 
@@ -32,7 +32,7 @@ presentation-ready PPT deck.
 
 ## How It Works
 ```
-Input Photo
+Input Photo(s)  ← single view or up to 4 multi-angle shots
     │
     ▼
 ┌─────────────────────────────────────────┐
@@ -70,9 +70,9 @@ enabling each stage to build upon the previous one's output.
 
 ## Features
 
-- 🎨 **Photorealistic Rendering** — Transforms rough model photos into
-  professional architectural visualizations with realistic lighting,
-  materials, and environment
+- 🎨 **Photorealistic Rendering** — Transforms one or more rough model photos
+  (single-view or multi-angle) into professional architectural visualizations
+  with realistic lighting, materials, and environment
 - 🧠 **Intelligent Analysis** — Automatically identifies building type,
   facade materials, massing, landscaping, urban relationships, and
   design highlights
@@ -131,10 +131,20 @@ GEMINI_API_KEY=your_api_key_here
 
 ## Usage
 
-### Basic
+### Basic — single view
 ```bash
 # Place your image in the inputs/ folder, then run:
 python agent.py --image "inputs/your_model.jpg"
+```
+
+### Multi-angle input
+```bash
+# Pass up to 4 photos taken from different angles:
+python agent.py --image \
+  inputs/view_front.jpg \
+  inputs/view_back.jpg \
+  inputs/view_side.jpg \
+  inputs/view_top.jpg
 ```
 
 ### With options
@@ -149,7 +159,7 @@ python agent.py \
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--image` | required | Path to input image |
+| `--image` | required | Path(s) to input image(s). Pass multiple paths separated by spaces for multi-angle input |
 | `--style` | from config | PPT style: `architecture` / `gradient-glass` / `vector-illustration` |
 | `--topic` | `"建筑设计分析报告"` | Report and PPT title |
 
